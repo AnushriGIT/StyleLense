@@ -1,0 +1,554 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>StyleLens — Visual Retrieval Engine</title>
+  <style>
+    :root {
+      --bg: #090a0f;
+      --surface: #12141c;
+      --border: #232736;
+      --accent: #5e66ff;
+      --accent-hover: #4d54e6;
+      --text: #e1e4f0;
+      --text-muted: #8c92a6;
+      --success: #00e699;
+      --warning: #ffb800;
+      --danger: #ff4d4d;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 2rem 1rem;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 1100px;
+      display: flex;
+      flex-direction: column;
+      gap: 2rem;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 1rem;
+    }
+
+    header h1 {
+      font-size: 2.5rem;
+      font-weight: 800;
+      letter-spacing: -0.05em;
+      background: linear-gradient(135deg, #a5a9ff, var(--accent));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 0.5rem;
+    }
+
+    header p {
+      color: var(--text-muted);
+      font-size: 1.1rem;
+    }
+
+    /* Search panel */
+    .search-panel {
+      background-color: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 2rem;
+      display: grid;
+      grid-template-columns: 1fr 1.5fr;
+      gap: 2rem;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+    }
+
+    @media (max-width: 768px) {
+      .search-panel {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* Image Dropzone */
+    .dropzone {
+      border: 2px dashed var(--border);
+      border-radius: 12px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem;
+      cursor: pointer;
+      position: relative;
+      background-color: rgba(255, 255, 255, 0.01);
+      transition: all 0.2s ease;
+      min-height: 220px;
+    }
+
+    .dropzone:hover {
+      border-color: var(--accent);
+      background-color: rgba(94, 102, 255, 0.04);
+    }
+
+    .dropzone svg {
+      width: 48px;
+      height: 48px;
+      stroke: var(--text-muted);
+      margin-bottom: 1rem;
+    }
+
+    .dropzone p {
+      color: var(--text-muted);
+      font-size: 0.95rem;
+      text-align: center;
+    }
+
+    .dropzone input {
+      display: none;
+    }
+
+    .preview-container {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      padding: 10px;
+      border-radius: 12px;
+      background-color: var(--surface);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .preview-container img {
+      max-width: 100%;
+      max-height: 100%;
+      border-radius: 8px;
+      object-fit: contain;
+    }
+
+    .clear-preview {
+      position: absolute;
+      top: 15px;
+      right: 15px;
+      background-color: rgba(0,0,0,0.7);
+      border: none;
+      color: white;
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+    }
+
+    /* Query fields */
+    .search-fields {
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+      justify-content: center;
+    }
+
+    .field-group {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    .field-group label {
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .text-input {
+      background-color: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.8rem 1rem;
+      color: var(--text);
+      font-size: 1rem;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    .text-input:focus {
+      border-color: var(--accent);
+    }
+
+    .range-control {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .range-control input {
+      flex: 1;
+      accent-color: var(--accent);
+    }
+
+    .search-btn {
+      background-color: var(--accent);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      padding: 1rem;
+      font-size: 1.1rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background-color 0.2s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+    }
+
+    .search-btn:hover {
+      background-color: var(--accent-hover);
+    }
+
+    /* Meta panel */
+    .meta-panel {
+      background-color: rgba(255, 255, 255, 0.02);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.5rem;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1.5rem;
+      align-items: center;
+    }
+
+    .meta-badge {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-weight: 600;
+      font-size: 0.95rem;
+      padding: 0.4rem 0.8rem;
+      border-radius: 6px;
+      background-color: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--border);
+    }
+
+    .meta-badge.high { color: var(--success); border-color: rgba(0, 230, 153, 0.3); }
+    .meta-badge.medium { color: var(--warning); border-color: rgba(255, 184, 0, 0.3); }
+    .meta-badge.low { color: var(--danger); border-color: rgba(255, 77, 77, 0.3); }
+
+    .tag-container {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+
+    .tag {
+      background-color: rgba(94, 102, 255, 0.1);
+      border: 1px solid rgba(94, 102, 255, 0.2);
+      color: #a5a9ff;
+      padding: 0.2rem 0.6rem;
+      border-radius: 4px;
+      font-size: 0.85rem;
+    }
+
+    /* Grid layout */
+    .results-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 1.5rem;
+    }
+
+    .product-card {
+      background-color: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      transition: transform 0.2s, border-color 0.2s;
+    }
+
+    .product-card:hover {
+      transform: translateY(-4px);
+      border-color: var(--accent);
+    }
+
+    .card-img-container {
+      position: relative;
+      padding-top: 135%; /* vertical portrait aspect ratio typical of clothing */
+      background-color: #0d0f17;
+      overflow: hidden;
+    }
+
+    .card-img-container img {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .similarity-badge {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      background-color: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(4px);
+      padding: 0.3rem 0.6rem;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: var(--success);
+      border: 1px solid rgba(0, 230, 153, 0.3);
+    }
+
+    .rank-badge {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      background-color: rgba(94, 102, 255, 0.85);
+      padding: 0.3rem 0.5rem;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      font-weight: 800;
+      color: white;
+    }
+
+    .card-info {
+      padding: 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.3rem;
+    }
+
+    .product-path {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      word-break: break-all;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .spinner {
+      border: 4px solid rgba(255, 255, 255, 0.1);
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      border-left-color: var(--accent);
+      animation: spin 1s linear infinite;
+      display: none;
+      margin: 2rem auto;
+    }
+
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <header>
+    <h1>StyleLens</h1>
+    <p>Layer 1 Retrieval Engine — Image Similarity & Semantic Text Search</p>
+  </header>
+
+  <div class="search-panel">
+    <!-- Left side: Dropzone -->
+    <div class="dropzone" id="dropzone" onclick="$('image-input').click()">
+      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+      </svg>
+      <p id="dropzone-text">Click or Drag to Upload Clothing Photo</p>
+      <input type="file" id="image-input" accept="image/*" onchange="handleImageSelect(event)">
+      
+      <div class="preview-container" id="preview-container" style="display: none;">
+        <img id="image-preview" src="" alt="Preview">
+        <button class="clear-preview" onclick="clearImage(event)">✕</button>
+      </div>
+    </div>
+
+    <!-- Right side: Fields -->
+    <div class="search-fields">
+      <div class="field-group">
+        <label for="query-input">Text Query / Refinement</label>
+        <input type="text" id="query-input" class="text-input" placeholder="e.g. blue striped linen dress...">
+      </div>
+
+      <div class="field-group">
+        <label>Results Limit (K)</label>
+        <div class="range-control">
+          <input type="range" id="top-k-input" min="1" max="40" value="12" oninput="$('top-k-val').innerText = this.value">
+          <span id="top-k-val" style="font-weight: 700; width: 24px;">12</span>
+        </div>
+      </div>
+
+      <button class="search-btn" onclick="executeSearch()">
+        <span id="search-btn-text">Execute Search</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Metadata overview (shown after search) -->
+  <div class="meta-panel" id="meta-panel" style="display: none;">
+    <div class="meta-badge" id="confidence-badge">
+      Confidence: <span id="confidence-val"></span>
+    </div>
+    <div class="tag-container" id="tags-container">
+      <!-- Tags populated dynamically -->
+    </div>
+    <div id="pivot-indicator" style="font-size: 0.9rem; color: var(--warning); display: none;">
+      ⚠️ Auto-pivoted search query: <span id="pivot-query-val" style="font-weight: bold;"></span>
+    </div>
+  </div>
+
+  <div class="spinner" id="spinner"></div>
+
+  <!-- Results Grid -->
+  <div class="results-grid" id="results-grid"></div>
+</div>
+
+<script>
+  const $ = id => document.getElementById(id);
+  let selectedFile = null;
+
+  function handleImageSelect(event) {
+    const file = event.target.files[0];
+    if (file) {
+      selectedFile = file;
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        $('image-preview').src = e.target.result;
+        $('preview-container').style.display = 'flex';
+      }
+      reader.readAsDataURL(file);
+    }
+  }
+
+  function clearImage(event) {
+    event.stopPropagation();
+    selectedFile = null;
+    $('image-input').value = '';
+    $('preview-container').style.display = 'none';
+    $('image-preview').src = '';
+  }
+
+  async function executeSearch() {
+    const userQuery = $('query-input').value.trim();
+    const topK = $('top-k-input').value;
+
+    if (!selectedFile && !userQuery) {
+      alert("Please provide either a query image or a text description.");
+      return;
+    }
+
+    $('spinner').style.display = 'block';
+    $('results-grid').innerHTML = '';
+    $('meta-panel').style.display = 'none';
+
+    try {
+      const formData = new FormData();
+      if (selectedFile) {
+        formData.append('image', selectedFile);
+      }
+      if (userQuery) {
+        formData.append('user_query', userQuery);
+      }
+      formData.append('top_k', topK);
+
+      const response = await fetch('/search', {
+        method: 'POST',
+        body: formData
+      });
+
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.detail || "Search failed.");
+      }
+
+      const data = await response.json();
+      renderResults(data);
+    } catch (err) {
+      alert("Error: " + err.message);
+    } finally {
+      $('spinner').style.display = 'none';
+    }
+  }
+
+  function renderResults(data) {
+    // Show Meta Panel if in image search mode
+    if (data.mode === "image_search") {
+      $('meta-panel').style.display = 'flex';
+      
+      const badge = $('confidence-badge');
+      badge.className = `meta-badge ${data.confidence}`;
+      $('confidence-val').innerText = data.confidence.toUpperCase() + ` (${data.confidence_score}%)`;
+
+      const tagsContainer = $('tags-container');
+      tagsContainer.innerHTML = '';
+      if (data.attribute_tags && data.attribute_tags.length > 0) {
+        data.attribute_tags.forEach(tag => {
+          const span = document.createElement('span');
+          span.className = 'tag';
+          span.innerText = tag;
+          tagsContainer.appendChild(span);
+        });
+      }
+
+      const pivotIndicator = $('pivot-indicator');
+      if (data.pivot_used) {
+        pivotIndicator.style.display = 'block';
+        $('pivot-query-val').innerText = `"${data.pivot_query}"`;
+      } else {
+        pivotIndicator.style.display = 'none';
+      }
+    }
+
+    const grid = $('results-grid');
+    grid.innerHTML = '';
+
+    if (data.results && data.results.length > 0) {
+      data.results.forEach(item => {
+        const filename = item.image_path.split('/').pop();
+        const card = document.createElement('div');
+        card.className = 'product-card';
+        card.innerHTML = `
+          <div class="card-img-container">
+            <span class="rank-badge">#${item.rank}</span>
+            <span class="similarity-badge">${item.similarity}%</span>
+            <img src="data:image/jpeg;base64,${item.image_data}" alt="clothing search result">
+          </div>
+          <div class="card-info">
+            <div class="product-path" title="${item.image_path}">${filename}</div>
+          </div>
+        `;
+        grid.appendChild(card);
+      });
+    } else {
+      grid.innerHTML = '<div style="grid-column: 1/-1; text-align: center; color: var(--text-muted);">No similar items found in the catalogue.</div>';
+    }
+  }
+</script>
+</body>
+</html>

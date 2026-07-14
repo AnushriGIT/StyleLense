@@ -1,0 +1,58 @@
+# ============================================================
+# Fashion Assistant - Required Libraries
+# ============================================================
+# Install with: pip install -r requirements.txt
+
+# Deep Learning (feature extraction with CNN)
+torch>=2.0.0
+torchvision>=0.15.0
+
+# Image processing
+Pillow>=9.0.0
+opencv-python>=4.7.0
+
+# Similarity search (fast nearest-neighbor lookup)
+faiss-cpu>=1.7.4
+
+# Scientific computing
+numpy>=1.23.0
+scikit-learn>=1.2.0
+
+# Data handling & visualization
+pandas>=1.5.0
+matplotlib>=3.6.0
+seaborn>=0.13.0
+tqdm>=4.64.0
+
+
+# Web application
+flask>=2.3.0
+flask-cors>=4.0.0
+
+# Transformer models (CLIP, DINOv2)
+transformers>=4.30.0
+
+# Dataset download utility (for DeepFashion)
+gdown>=4.7.0
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+python-multipart>=0.0.9
+
+# Agent orchestration
+langgraph>=0.1.0
+
+# LLM for AI-generated responses (Responder + Evaluator agents)
+openai>=1.30.0
+
+# LangChain OpenAI wrapper — required for create_react_agent (Responder ReAct agent)
+langchain-openai>=0.1.0
+
+# MCP client — connects to MyStoreHelp MCP server (CRM, Orders, Loyalty tools)
+mcp[cli]>=1.0.0
+
+# JWT authentication (login + role-based access control)
+python-jose[cryptography]>=3.3.0
+
+# Type stubs for static checking
+types-tqdm
+

@@ -1,0 +1,45 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+.venv/
+venv/
+venv312/
+ENV/
+
+# Large Model weights and Embeddings (Crucial for GitHub limits)
+embeddings/*.npy
+embeddings/*.bin
+models/clip_best/
+models/clip_epoch*/
+models/*.pth
+models/*.npy
+models/*.safetensors
+*.safetensors
+
+# Data & temporary uploads
+uploads/
+data/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Caches & tooling artifacts
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+*.egg-info/
+
+# Secrets (defensive — none currently present)
+.env
+.env.*
+*.log
+
+# Nested repo — has its own .git/, not part of this project's history
+antigravity-skills/
+
+# Personal/local tool overrides — not shared team config
+.claude/settings.local.json
