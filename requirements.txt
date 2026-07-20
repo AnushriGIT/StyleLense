@@ -56,3 +56,5 @@ python-jose[cryptography]>=3.3.0
 # Type stubs for static checking
 types-tqdm
 
+# Local VLM support
+einops

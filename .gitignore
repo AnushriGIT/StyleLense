@@ -12,11 +12,10 @@ ENV/
 # Large Model weights and Embeddings (Crucial for GitHub limits)
 embeddings/*.npy
 embeddings/*.bin
-models/clip_best/
-models/clip_epoch*/
-models/*.pth
-models/*.npy
-models/*.safetensors
+embeddings/*.json
+models/*
+!models/README.md
+!models/.gitkeep
 *.safetensors
 
 # Data & temporary uploads

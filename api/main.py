@@ -13,9 +13,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
 from PIL import Image
-from pydantic import BaseModel
+from PIL import UnidentifiedImageError
+from pydantic import BaseModel, Field
 
 import retrieval_core as utils
+from config import MAX_CONTENT_LENGTH, ALLOWED_EXTENSIONS
 
 '''
 # ==========================================
@@ -142,10 +144,10 @@ class TextSearchRequest(BaseModel):
     
     Attributes:
         query (str): The natural language text describing the clothing item to search for.
-        top_k (Optional[int]): The maximum number of similar matches to retrieve (default: 10).
+        top_k (int): The maximum number of similar matches to retrieve (default: 10, range: 1-100).
     """
     query: str
-    top_k: Optional[int] = 10
+    top_k: int = Field(default=10, ge=1, le=100)
 
 @app.get("/health")
 def health():
@@ -153,10 +155,6 @@ def health():
     return {
         "status": "healthy",
         "device": str(utils.DEVICE),
-        "resnet_gallery": {
-            "ready": utils.RESNET_GALLERY is not None,
-            "shape": list(utils.RESNET_GALLERY.shape) if utils.RESNET_GALLERY is not None else None
-        },
         "clip_gallery": {
             "ready": utils.CLIP_GALLERY is not None,
             "shape": list(utils.CLIP_GALLERY.shape) if utils.CLIP_GALLERY is not None else None
@@ -171,7 +169,7 @@ def health():
 async def search(
     image: Optional[UploadFile] = File(None),
     user_query: Optional[str] = Form(None),
-    top_k: int = Form(10)
+    top_k: int = Form(10, ge=1, le=100)
 ):
     """
     Accepts an image upload (and optional text query) or a text query alone.
@@ -199,16 +197,30 @@ async def search(
             }
 
         # ── Image (with optional Text) Mode ─────────────────────────────────────
+        extension = (image.filename or "").rsplit(".", 1)[-1].lower() if image.filename and "." in image.filename else ""
+        if extension not in ALLOWED_EXTENSIONS:
+            raise HTTPException(status_code=400, detail=f"Unsupported file type. Allowed: {sorted(ALLOWED_EXTENSIONS)}")
+
         contents = await image.read()
-        pil_image = Image.open(io.BytesIO(contents)).convert("RGB")
+        if len(contents) > MAX_CONTENT_LENGTH:
+            raise HTTPException(status_code=413, detail=f"Image exceeds max upload size of {MAX_CONTENT_LENGTH} bytes.")
+
+        try:
+            # Pillow's built-in decompression-bomb guard (Image.MAX_IMAGE_PIXELS, ~89M px
+            # default) protects this untrusted-upload path from a small file that decodes
+            # into gigabytes of pixel data: it warns above the limit and raises
+            # DecompressionBombError above 2x the limit, blocking the OOM before it happens.
+            pil_image = Image.open(io.BytesIO(contents)).convert("RGB")
+        except UnidentifiedImageError:
+            raise HTTPException(status_code=400, detail="Uploaded file is not a valid image.")
 
         # Visual search via DINOv2
         if utils.DINOV2_GALLERY is None or utils.DINOV2_MODEL is None:
             raise HTTPException(status_code=503, detail="DINOv2 model or gallery embeddings database is not loaded.")
-        
+
         query_emb = utils.embed_image_dinov2(pil_image)
-        # Search the DINOv2 gallery to get the top 50 visual matches
-        candidates = utils.nearest_search(query_emb, utils.DINOV2_GALLERY, top_k=50)
+        # Search enough candidates to cover both the raw top_k and any re-ranking/pivot headroom
+        candidates = utils.nearest_search(query_emb, utils.DINOV2_GALLERY, top_k=max(50, top_k))
         top_score = candidates[0]["similarity"] if candidates else 0.0
 
         # Confidence categorization
@@ -251,6 +263,8 @@ async def search(
             "results": candidates
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Search failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))

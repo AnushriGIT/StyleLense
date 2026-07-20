@@ -11,7 +11,9 @@ Run:
 """
 
 import os
+import json
 import argparse
+from datetime import datetime, timezone
 import numpy as np
 import pandas as pd
 from tabulate import tabulate
@@ -22,6 +24,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import EVAL_PARTITION_FILE, EMBEDDINGS_DIR
 EVAL_FILE = EVAL_PARTITION_FILE
 
+# Persisted run history, used to detect Recall@K regressions between runs.
+HISTORY_FILE = os.path.abspath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "eval_results", "history.json")
+)
+
 # ── Available model embeddings ─────────────────────────────────────────────────
 MODELS = {
     "clip_base":           ("clip_queries.npy",                 "clip_gallery.npy"),
@@ -31,6 +38,7 @@ MODELS = {
     "trained_efficientnet":("trained_efficientnet_queries.npy", "trained_efficientnet_gallery.npy"),
     "trained_siamese":     ("trained_siamese_queries.npy",      "trained_siamese_gallery.npy"),
     "trained_siamese_clip":("trained_siamese_clip_queries.npy", "trained_siamese_clip_gallery.npy"),
+    "clip_text_image":     ("clip_text_image_queries.npy",      "clip_text_image_gallery.npy"),
 }
 
 
@@ -107,12 +115,56 @@ def evaluate_model(model_name: str, query_paths: list, gallery_paths: list,
     return recall_at_k(query_emb, gallery_emb, ground_truth, ks)
 
 
+def load_history() -> list:
+    """All previously recorded eval runs, oldest first. Empty list if none yet."""
+    if not os.path.exists(HISTORY_FILE):
+        return []
+    with open(HISTORY_FILE, "r") as f:
+        return json.load(f)
+
+
+def save_history(history: list) -> None:
+    os.makedirs(os.path.dirname(HISTORY_FILE), exist_ok=True)
+    with open(HISTORY_FILE, "w") as f:
+        json.dump(history, f, indent=2)
+
+
+def last_result_for(model_name: str, history: list) -> dict | None:
+    """Most recent recorded result for this model, or None if it's never been run before."""
+    matches = [entry for entry in history if entry["model"] == model_name]
+    return matches[-1] if matches else None
+
+
+def check_regression(model_name: str, results: dict, previous: dict | None, tolerance: float) -> list:
+    """
+    Compares this run's Recall@K against the last recorded run for the same model.
+    Returns human-readable regression messages; empty list if none (or no prior baseline exists yet).
+    """
+    if previous is None:
+        return []
+    messages = []
+    for k, current_value in results.items():
+        prev_value = previous["recall"].get(str(k))
+        if prev_value is None:
+            continue
+        drop = prev_value - current_value
+        if drop > tolerance:
+            messages.append(
+                f"{model_name} Recall@{k} dropped {drop:.1f}pp "
+                f"(from {prev_value:.1f}% to {current_value:.1f}%, tolerance {tolerance:.1f}pp)"
+            )
+    return messages
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", default="all",
                         help="Model to evaluate, or 'all' (default)")
     parser.add_argument("--ks", nargs="+", type=int, default=[1, 5, 10, 20],
                         help="K values for Recall@K (default: 1 5 10 20)")
+    parser.add_argument("--tolerance", type=float, default=2.0,
+                        help="Max acceptable Recall@K drop in percentage points vs. the last "
+                             "recorded run before this counts as a regression (default: 2.0)")
     args = parser.parse_args()
 
     print("Loading eval partition...")
@@ -124,6 +176,10 @@ def main():
 
     models_to_eval = list(MODELS.keys()) if args.model == "all" else [args.model]
 
+    history = load_history()
+    new_entries = []
+    regressions = []
+
     rows = []
     for model_name in models_to_eval:
         print(f"Evaluating {model_name}...")
@@ -131,10 +187,22 @@ def main():
         if result is None:
             print("  Skipped (embeddings not found)\n")
             continue
+
+        previous = last_result_for(model_name, history)
+        regressions.extend(check_regression(model_name, result, previous, args.tolerance))
+        new_entries.append({
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "model": model_name,
+            "recall": {str(k): result[k] for k in args.ks},
+        })
+
         row = [model_name] + [f"{result[k]:.1f}%" for k in args.ks]
         rows.append(row)
         print("  " + "  ".join(f"R@{k}: {result[k]:.1f}%" for k in args.ks))
         print()
+
+    if new_entries:
+        save_history(history + new_entries)
 
     if rows:
         headers = ["Model"] + [f"Recall@{k}" for k in args.ks]
@@ -149,6 +217,19 @@ def main():
                 print("\t".join(r))
         print()
         print("Recall@K = % of queries where correct shop image is in top K results")
+        print(f"Results recorded to {os.path.relpath(HISTORY_FILE)}")
+
+    print()
+    if regressions:
+        print("=" * 60)
+        print("REGRESSION(S) DETECTED vs. last recorded run:")
+        print("=" * 60)
+        for msg in regressions:
+            print(f"  - {msg}")
+        sys.exit(1)
+    else:
+        print("No regressions vs. last recorded run (or no prior baseline yet).")
+        sys.exit(0)
 
 
 if __name__ == "__main__":

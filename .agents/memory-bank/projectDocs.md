@@ -9,7 +9,7 @@ StyleLens is a deep-learning clothing retrieval and similarity search engine (La
 ### Models:
 *   **ResNet-50 (Visual Baseline):** Used for pure image embedding extraction (outputs a 2048-dim vector).
 *   **CLIP (ViT-B/32, Multimodal):** Used for text queries, visual queries, and zero-shot tagging (outputs a 512-dim vector). Fine-tuned weights are saved under `models/clip_best/` (containing `config.json` and `model.safetensors`).
-*   **DINOv2 (ViT-B/14, Candidate):** Evaluated as a potential visual backbone. Demonstrates a superior fine-tuned Recall@1 of **16.80%** (outperforming ResNet-50's 5.94%). Note: DINOv2 is a vision-only model and lacks text capability.
+*   **DINOv2 (ViT-B/14, Candidate):** Evaluated as a potential visual backbone. Fine-tuned Recall@1 of **16.80%** — the highest of the four models, but only marginally ahead of fine-tuned CLIP's 16.58% (previously undocumented; see benchmark table). Both far outperform the CNNs (ResNet-50 5.94%, EfficientNet-B4 8.18%). Note: DINOv2 is vision-only and lacks CLIP's text-query/zero-shot-tagging capability, which matters for StyleLens's actual multimodal use case even though DINOv2 scores marginally higher on pure Recall@1.
 
 ### Databases (Galleries):
 *   Pre-computed vector embeddings for the clothing gallery are stored in `embeddings/` as `.npy` matrices:
@@ -44,5 +44,8 @@ If used in a publication, cite:
 | EfficientNet-B4 (baseline) | 3.89% | 7.27% | 9.39% | 12.08% |
 | EfficientNet-B4 (fine-tuned) | 8.18% | 16.61% | 21.46% | 27.30% |
 | CLIP ViT-B/32 (baseline) | 3.38% | 5.77% | 7.10% | 8.77% |
+| CLIP ViT-B/32 (fine-tuned) | 16.58% | 31.59% | 38.62% | 46.53% |
 | DINOv2 ViT-B/14 (baseline) | 3.62% | 6.24% | 7.76% | 9.62% |
 | **DINOv2 ViT-B/14 (fine-tuned)** | **16.80%** | **31.98%** | **39.10%** | **46.52%** |
+
+*(Fine-tuned CLIP row added 2026-07-18: the trained embeddings already existed on disk but had never actually been evaluated/recorded anywhere — computed via a real `scripts/evaluate_retrieval.py` run, not estimated. Full per-model numbers, including siamese-network variants, are tracked run-over-run in `eval_results/history.json`.)*

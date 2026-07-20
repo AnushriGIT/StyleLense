@@ -9,8 +9,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ── Dataset Paths ──────────────────────────────────────────────────────────────
-# 👉 UPDATE THIS to wherever your DeepFashion dataset is stored on your machine.
-DATASET_BASE_PATH = "/Users/anushrin/Documents/Cowork Playground/FashionRecommendation/workspace/Capstone Fashion Assistant/fashion_assistant/data/DeepFashion Database/Data/Consumer-to-shop Clothes Retrieval Benchmark"
+# 👉 Override via the DATASET_BASE_PATH env var (e.g. in a .env file) for any
+# machine/container where the dataset isn't at this default location.
+DATASET_BASE_PATH = os.getenv(
+    "DATASET_BASE_PATH",
+    "/Users/anushrin/Documents/Cowork Playground/FashionRecommendation/workspace/Capstone Fashion Assistant/fashion_assistant/data/DeepFashion Database/Data/Consumer-to-shop Clothes Retrieval Benchmark"
+)
 
 # Subdirectories inside the dataset (standard DeepFashion layout)
 IMG_DIR         = os.path.join(DATASET_BASE_PATH, "img")

@@ -12,8 +12,6 @@ import pandas as pd
 from PIL import Image
 
 import torch
-import torch.nn as nn
-import torchvision.models as models
 import torchvision.transforms as transforms
 
 from config import (
@@ -32,19 +30,12 @@ from config import (
     Read the dataset evaluation splits. Collect all unique shop image file paths designated 
     for the "test" split. These form our searchable clothing database (gallery).
 
-3. INITIALISE RESNET-50 MODEL:
-    Load a ResNet-50 model with the classification layer removed (so it outputs a 2048-dim vector instead).
-    - Look for a custom fine-tuned ResNet model (`resnet50_best.pth`).
-    - If found, load those custom weights.
-    - If not, fall back to standard pre-trained ImageNet weights.
-    - Load the pre-computed ResNet gallery database (`trained_resnet50_gallery.npy`).
-
-4. INITIALISE CLIP MODEL:
+3. INITIALISE CLIP MODEL:
     - Attempt to load fine-tuned CLIP weights from `models/clip_best`.
     - If not found, load OpenAI's standard pre-trained CLIP weights from Hugging Face.
     - Load the CLIP pre-computed gallery database (`trained_clip_gallery.npy` or base `clip_gallery.npy`).
 
-5. CREATE HELPER MAPS & VOCABULARY:
+4. CREATE HELPER MAPS & VOCABULARY:
     - Build a fast lookup dictionary mapping absolute file paths to gallery indexes.
     - Define a vocabulary list of descriptive clothing attributes (e.g., "striped", "denim") 
       for zero-shot tagging on user-uploaded images.
@@ -63,32 +54,33 @@ df_eval = pd.read_csv(EVAL_PARTITION_FILE, sep=r'\s+', skiprows=1)
 df_eval.columns = ['consumer_image', 'shop_image', 'item_id', 'split']
 GALLERY_PATHS = df_eval[df_eval['split'] == 'test']['shop_image'].unique().tolist()
 
-# ── ResNet-50 ──────────────────────────────────────────────────────────────────
-_base = models.resnet50(weights=None)
-RESNET_MODEL = nn.Sequential(*list(_base.children())[:-1], nn.Flatten())
 
-_best = os.path.join(MODELS_DIR, "resnet50_best.pth")
-_old  = os.path.join(MODELS_DIR, "resnet50_finetuned.pth")
+def _validate_gallery(gallery, name: str):
+    """
+    Guard against the documented "Critical Rule": if a gallery's row count doesn't
+    match GALLERY_PATHS, nearest_search() would silently map similarity scores to
+    the wrong image path with no error. Disable the gallery instead of trusting it —
+    same fail-soft treatment as a missing file, so callers see a clean 503 rather
+    than silently wrong results.
+    """
+    if gallery is None:
+        return None
+    if gallery.shape[0] != len(GALLERY_PATHS):
+        print(
+            f"{name} gallery has {gallery.shape[0]} rows but GALLERY_PATHS has "
+            f"{len(GALLERY_PATHS)} entries — regenerate the {name} gallery. "
+            f"Disabling it until the mismatch is fixed."
+        )
+        return None
+    return gallery
 
-if os.path.exists(_best):
-    RESNET_MODEL.load_state_dict(torch.load(_best, map_location=DEVICE))
-elif os.path.exists(_old):
-    RESNET_MODEL.load_state_dict(torch.load(_old, map_location=DEVICE))
-else:
-    _base2 = models.resnet50(weights=models.ResNet50_Weights.IMAGENET1K_V1)
-    RESNET_MODEL = nn.Sequential(*list(_base2.children())[:-1], nn.Flatten())
-
-RESNET_MODEL = RESNET_MODEL.eval().to(DEVICE)
-
-RESNET_TRANSFORM = transforms.Compose([
+# ── Shared vision transform (used by DINOv2) ────────────────────────────────────
+IMAGE_TRANSFORM = transforms.Compose([
     transforms.Resize(256),
     transforms.CenterCrop(224),
     transforms.ToTensor(),
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 ])
-
-_resnet_emb_path = os.path.join(EMBEDDINGS_DIR, "trained_resnet50_gallery.npy")
-RESNET_GALLERY = np.load(_resnet_emb_path).astype(np.float32) if os.path.exists(_resnet_emb_path) else None
 
 # ── CLIP ───────────────────────────────────────────────────────────────────────
 CLIP_MODEL     = None
@@ -116,6 +108,7 @@ try:
         CLIP_GALLERY = np.load(_trained_clip_path).astype(np.float32)
     elif os.path.exists(_base_clip_path):
         CLIP_GALLERY = np.load(_base_clip_path).astype(np.float32)
+    CLIP_GALLERY = _validate_gallery(CLIP_GALLERY, "clip")
 except Exception as e:
     print(f"CLIP not available: {e}")
 
@@ -135,6 +128,7 @@ try:
 
     if os.path.exists(_dinov2_emb_path):
         DINOV2_GALLERY = np.load(_dinov2_emb_path).astype(np.float32)
+    DINOV2_GALLERY = _validate_gallery(DINOV2_GALLERY, "dinov2")
 except Exception as e:
     print(f"DINOv2 loading failed: {e}")
 
@@ -174,22 +168,6 @@ def l2_normalize(v: np.ndarray) -> np.ndarray:
     """
     norm = np.linalg.norm(v, axis=-1, keepdims=True)
     return v / np.maximum(norm, 1e-8)
-
-
-def embed_image(pil_image: Image.Image) -> np.ndarray:
-    """
-    Extract a 2048-dimensional feature embedding from an image using ResNet-50.
-    
-    Steps:
-      1. Apply preprocessing transforms (Resize, crop, normalize colors).
-      2. Run the image through the convolutional layers of ResNet-50.
-      3. Flatten the output into a 2048-dim vector.
-      4. Normalize the vector to unit length (L2 norm).
-    """
-    tensor = RESNET_TRANSFORM(pil_image).unsqueeze(0).to(DEVICE)
-    with torch.no_grad():
-        emb = RESNET_MODEL(tensor).cpu().numpy().astype(np.float32)
-    return l2_normalize(emb)
 
 
 def embed_text(query: str) -> np.ndarray:
@@ -235,7 +213,7 @@ def embed_image_dinov2(pil_image: Image.Image) -> np.ndarray:
     """
     if DINOV2_MODEL is None:
         raise ValueError("DINOv2 model is not loaded.")
-    tensor = RESNET_TRANSFORM(pil_image).unsqueeze(0).to(DEVICE)
+    tensor = IMAGE_TRANSFORM(pil_image).unsqueeze(0).to(DEVICE)
     with torch.no_grad():
         emb = DINOV2_MODEL(tensor).cpu().numpy().astype(np.float32)
     return l2_normalize(emb)
@@ -341,7 +319,7 @@ def _clean_tag(attr: str) -> str:
     This filters out redundant stopwords like "fabric", "material", "clothing", etc.
     """
     stopwords = {"fabric", "material", "print", "pattern",
-                 "length", "colour", "tones", "wear", "clothing"}
+                 "length", "colour", "tones", "wear", "clothing", "silhouette"}
     words = [w for w in attr.split() if w.lower() not in stopwords]
     return " ".join(words) if words else attr
 
