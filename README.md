@@ -40,14 +40,15 @@ flowchart TD
 
 ---
 
-## 📊 Comprehensive Deliverables & Evaluation Rubric Audit
+## ⚡ Core System Modules & Technical Highlights
 
-| Rubric Category | Weight | Requirements Covered | Code & Notebook Deliverables | Status |
-| :--- | :--- | :--- | :--- | :--- |
-| **EDA & Data Preparation** | **30%** | Dataset distributions, image size variance, domain gap, cleaning, streaming loaders, category hard negative sampling. | [`notebooks/01_eda.ipynb`](file:///Users/anushrin/Documents/AG/ShopAssist/StyleLense/notebooks/01_eda.ipynb)<br>[`fashion_ds_processing.py`](file:///Users/anushrin/Documents/AG/ShopAssist/StyleLense/fashion_ds_processing.py) | ✅ **100% Met** |
-| **Model Training & Evaluation** | **30%** | Baseline comparison (ResNet, EfficientNet, DINOv2, CLIP), Triplet & InfoNCE fine-tuning, reproducible Recall@K benchmark. | [`notebooks/02_model_experiments.ipynb`](file:///Users/anushrin/Documents/AG/ShopAssist/StyleLense/notebooks/02_model_experiments.ipynb)<br>[`notebooks/03_fine_tuning.ipynb`](file:///Users/anushrin/Documents/AG/ShopAssist/StyleLense/notebooks/03_fine_tuning.ipynb)<br>[`notebooks/04_siamese.ipynb`](file:///Users/anushrin/Documents/AG/ShopAssist/StyleLense/notebooks/04_siamese.ipynb)<br>[`scripts/evaluate_retrieval.py`](file:///Users/anushrin/Documents/AG/ShopAssist/StyleLense/scripts/evaluate_retrieval.py) | ✅ **100% Met** |
-| **Creativity & Innovation** | **25%** | 5-stage ablation study (Runs A–E), 3-attempt Text Search series, multi-modality (Google Lens style text+image search), attribute dropout ($p=0.20$). | [`scripts/train_clip_vlm_hybrid.py`](file:///Users/anushrin/Documents/AG/ShopAssist/StyleLense/scripts/train_clip_vlm_hybrid.py)<br>[`Reference/Knowledge/Interview_Knowledge_Refresh_Guide.md`](file:///Users/anushrin/Documents/AG/ShopAssist/StyleLense/Reference/Knowledge/Interview_Knowledge_Refresh_Guide.md) | ✅ **100% Met** |
-| **Solution Documentation** | **15%** | Comprehensive README, step-by-step setup, system architecture, API specification, 90 Pytest unit tests. | [`README.md`](file:///Users/anushrin/Documents/AG/ShopAssist/StyleLense/README.md)<br>[`docs/RETRIEVAL_CORE.md`](file:///Users/anushrin/Documents/AG/ShopAssist/StyleLense/docs/RETRIEVAL_CORE.md)<br>[`tests/`](file:///Users/anushrin/Documents/AG/ShopAssist/StyleLense/tests/) | ✅ **100% Met** |
+| Core System Module | Primary Engineering Focus | Key Technical Components | Code & Implementation |
+| :--- | :--- | :--- | :--- |
+| **Exploratory Data Analysis (EDA)** | DeepFashion dataset analytics, domain gap & category long-tail distributions. | Analysis of consumer vs shop domain gap, image resolution variance, annotation distributions. | [`notebooks/01_eda.ipynb`](file:///Users/anushrin/Documents/AG/ShopAssist/StyleLense/notebooks/01_eda.ipynb) |
+| **Data Engineering & Sampling** | Streaming PyTorch DataLoader pipeline with hard-negative mining. | Category-constrained negative sampler, PIL image streaming, VLM caption collation. | [`fashion_ds_processing.py`](file:///Users/anushrin/Documents/AG/ShopAssist/StyleLense/fashion_ds_processing.py) |
+| **Multi-Backbone Modeling Engine** | Comparative fine-tuning across CNNs, Vision Transformers & CLIP. | ResNet-50, EfficientNet-B4, DINOv2 ViT-B/14, OpenAI CLIP ViT-B/32, Triplet Loss, InfoNCE. | [`notebooks/02_model_experiments.ipynb`](file:///Users/anushrin/Documents/AG/ShopAssist/StyleLense/notebooks/02_model_experiments.ipynb)<br>[`notebooks/03_fine_tuning.ipynb`](file:///Users/anushrin/Documents/AG/ShopAssist/StyleLense/notebooks/03_fine_tuning.ipynb)<br>[`notebooks/04_siamese.ipynb`](file:///Users/anushrin/Documents/AG/ShopAssist/StyleLense/notebooks/04_siamese.ipynb) |
+| **Multi-Modal Search Engine** | 5-stage ablation & natural language text query optimization. | Hybrid loss ($\mathcal{L}_{\text{triplet}} + \mathcal{L}_{\text{InfoNCE}}$), differential LRs, attribute dropout ($p=0.20$). | [`scripts/train_clip_vlm_hybrid.py`](file:///Users/anushrin/Documents/AG/ShopAssist/StyleLense/scripts/train_clip_vlm_hybrid.py) |
+| **Production Serving Layer** | Asynchronous REST API & web dashboard for sub-10ms search. | FastAPI, Uvicorn, L2 vector normalization, cosine dot-product search, 90 Pytest unit tests. | [`api/main.py`](file:///Users/anushrin/Documents/AG/ShopAssist/StyleLense/api/main.py)<br>[`retrieval_core.py`](file:///Users/anushrin/Documents/AG/ShopAssist/StyleLense/retrieval_core.py)<br>[`tests/`](file:///Users/anushrin/Documents/AG/ShopAssist/StyleLense/tests/) |
 
 ---
 
