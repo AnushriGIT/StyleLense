@@ -40,5 +40,13 @@ Thumbs.db
 # Nested repo — has its own .git/, not part of this project's history
 antigravity-skills/
 
-# Personal/local tool overrides — not shared team config
-.claude/settings.local.json
+# Personal/local tool overrides, internal specs & reference notes
+.claude/
+.agents/
+.vscode/
+agent-scaffold/
+specs/
+Reference/
+
+
+

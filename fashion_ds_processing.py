@@ -10,6 +10,14 @@ Classes:
   CachedTripletFashionDataset — same as above but pre-loads all images into RAM (fast training)
   PairFashionDataset          — same/different pairs with binary label (siamese.ipynb)
   CLIPTripletDataset          — PIL-image triplets for CLIP fine-tuning (fine_tuning.ipynb)
+  CLIPShopCaptionDataset      — shop image + VLM caption pairs for InfoNCE training
+  AdvancedCLIPHybridDataset   — ablation-study dataset with hard negatives, structured prompts,
+                                and dynamic text augmentation (train_clip_vlm_hybrid.py)
+
+Functions:
+  hybrid_augmented_collate_fn — custom DataLoader collate for AdvancedCLIPHybridDataset
+  build_item_captions         — builds attribute-based caption dict from DeepFashion annotations
+  load_item_metadata          — parses clothes_type and category_folder per item_id
 """
 
 import os
@@ -511,6 +519,265 @@ def build_item_captions(dataset_root: str) -> dict:
             item_captions[item_id] = caption
             
     return item_captions
+
+
+class AdvancedCLIPHybridDataset(Dataset):
+    """
+    Advanced CLIP dataset for ablation study of 5 fine-tuning strategies.
+
+    This dataset supports toggling each strategy independently so we can
+    measure the isolated contribution of each technique to Recall@K:
+
+    Strategy 2 — Hard Negative Mining (``use_hard_negatives``):
+        Constrains negative item sampling to the same *category folder*
+        (e.g., ``Polo_Shirt``) rather than just the same clothes_type (top/
+        bottom/outfit). This forces the model to learn fine-grained intra-
+        category discrimination (e.g., distinguish two different polo shirts).
+
+    Strategy 3 — Structured Prompt Templates (``use_structured_prompts``):
+        Prepends DeepFashion metadata tags to VLM caption strings:
+        "[Category: Polo_Shirt] [Type: top] [Attributes: ...] VLM caption..."
+        Gives the text encoder explicit, deterministic anchors in addition to
+        the natural language description.
+
+    Strategy 5 — Dynamic Text Augmentation (``augment_text``):
+        With probability ``augment_prob``, randomly drops or permutes
+        1–2 structured metadata tags during ``__getitem__``. This simulates
+        incomplete user search queries (e.g., just "a red dress") and makes
+        the text encoder robust to partial input at inference time.
+
+    Args:
+        df: DataFrame with columns [item_id, consumer_image, shop_image].
+        dataset_root: Absolute path to the DeepFashion dataset root.
+        item_captions: Dict mapping item_id -> VLM-generated caption string.
+        item_to_clothes_type: Dict mapping item_id -> int (1=top, 2=bottom, 3=outfit).
+        item_to_category_folder: Dict mapping item_id -> category folder name.
+        vlm_captions: Optional dict of item_id -> richer VLM description from
+            ``shop_captions.json``. If provided, used as the base caption.
+        use_hard_negatives: If True, constrains negative sampling to the exact
+            same category folder as the anchor (Strategy 2). Falls back to
+            same clothes_type if the category pool has fewer than 2 unique items.
+        use_structured_prompts: If True, prepends metadata tags to caption strings
+            (Strategy 3). If False, uses plain VLM / attribute captions.
+        augment_text: If True, randomly drops metadata tags at ``augment_prob``
+            probability per item during __getitem__ (Strategy 5).
+        augment_prob: Probability of applying text augmentation on any given sample.
+    """
+
+    def __init__(
+        self,
+        df,
+        dataset_root: str,
+        item_captions: dict,
+        item_to_clothes_type: dict,
+        item_to_category_folder: dict,
+        vlm_captions: dict = None,
+        use_hard_negatives: bool = True,
+        use_structured_prompts: bool = True,
+        augment_text: bool = True,
+        augment_prob: float = 0.20,
+    ):
+        import random
+        self.df = df.reset_index(drop=True)
+        self.dataset_root = dataset_root
+        self.item_captions = item_captions          # attribute-based captions fallback
+        self.vlm_captions = vlm_captions or {}      # richer VLM descriptions
+        self.item_to_clothes_type = item_to_clothes_type
+        self.item_to_category_folder = item_to_category_folder
+        self.use_hard_negatives = use_hard_negatives
+        self.use_structured_prompts = use_structured_prompts
+        self.augment_text = augment_text
+        self.augment_prob = augment_prob
+        self._rng = random
+
+        # ── Build lookup tables ────────────────────────────────────────────────
+        # Map item_id -> list of available shop image paths
+        self.item_to_shops = df.groupby("item_id")["shop_image"].unique().to_dict()
+        self.all_items = list(self.item_to_shops.keys())
+
+        # Group by clothes_type (broad: 1=top, 2=bottom, 3=outfit)
+        self.type_to_items: dict[int, list] = {}
+        for item in self.all_items:
+            ctype = self.item_to_clothes_type.get(item, 1)
+            self.type_to_items.setdefault(ctype, []).append(item)
+
+        # Group by category folder (fine-grained: Polo_Shirt, Maxi_Dress, …)
+        self.category_to_items: dict[str, list] = {}
+        for item in self.all_items:
+            cat = self.item_to_category_folder.get(item, "__unknown__")
+            self.category_to_items.setdefault(cat, []).append(item)
+
+        # Validate that at least 2 items exist per clothes_type bucket
+        for ctype, items in self.type_to_items.items():
+            if len(items) < 2:
+                raise ValueError(
+                    f"AdvancedCLIPHybridDataset: clothes_type={ctype} has only "
+                    f"{len(items)} item(s) — need ≥2 to sample hard negatives."
+                )
+
+    # ── Helpers ────────────────────────────────────────────────────────────────
+
+    def _load(self, rel_path: str):
+        """Load a PIL image from a relative dataset path, returning a blank image on error."""
+        full_path = os.path.join(self.dataset_root, rel_path)
+        try:
+            return Image.open(full_path).convert("RGB")
+        except Exception:
+            return Image.new("RGB", (224, 224), color=(128, 128, 128))
+
+    def _build_caption(self, item_id: str) -> str:
+        """
+        Construct the text description for an item.
+
+        If ``use_structured_prompts`` is True, prepends metadata tags:
+            "[Category: Polo_Shirt] [Type: top] [Attributes: <attr_caption>] <vlm_caption>"
+
+        Otherwise returns the plain VLM or attribute caption.
+
+        If ``augment_text`` is True, randomly drops 1–2 of the structured tags
+        with probability ``augment_prob`` to simulate partial user queries.
+
+        Args:
+            item_id: The DeepFashion item identifier string.
+
+        Returns:
+            A string containing the final caption for this item.
+        """
+        # Prefer richer VLM description; fall back to attribute-based caption
+        base_caption = self.vlm_captions.get(item_id) or self.item_captions.get(item_id, "a clothing item")
+
+        if not self.use_structured_prompts:
+            return base_caption
+
+        # ── Build structured tags ──────────────────────────────────────────────
+        category = self.item_to_category_folder.get(item_id, "")
+        clothes_type_int = self.item_to_clothes_type.get(item_id, 1)
+        type_name = {1: "top", 2: "bottom", 3: "outfit"}.get(clothes_type_int, "clothing")
+        attr_caption = self.item_captions.get(item_id, "")
+
+        tags = []
+        if category:
+            tags.append(f"[Category: {category.replace('_', ' ')}]")
+        tags.append(f"[Type: {type_name}]")
+        if attr_caption:
+            tags.append(f"[Attributes: {attr_caption}]")
+
+        # ── Strategy 5: Dynamic attribute dropout ─────────────────────────────
+        if self.augment_text and self._rng.random() < self.augment_prob and len(tags) > 1:
+            # Randomly drop 1 tag (never drop all tags)
+            drop_idx = self._rng.randrange(len(tags))
+            tags.pop(drop_idx)
+
+        return " ".join(tags) + " " + base_caption
+
+    def _sample_negative(self, anchor_id: str) -> str:
+        """
+        Sample a negative item_id, optionally constrained to the same category
+        (Strategy 2: Hard Negative Mining).
+
+        If ``use_hard_negatives`` is True, searches within the same category
+        folder pool first. Falls back to same clothes_type if the category pool
+        has only 1 unique item, and falls back to global pool as a last resort.
+
+        Args:
+            anchor_id: The item_id of the anchor (positive) item.
+
+        Returns:
+            The item_id of the sampled negative item.
+        """
+        neg_item = anchor_id
+
+        if self.use_hard_negatives:
+            # Fine-grained pool: same category folder (e.g., Polo_Shirt)
+            cat = self.item_to_category_folder.get(anchor_id, "__unknown__")
+            pool = [i for i in self.category_to_items.get(cat, []) if i != anchor_id]
+
+            if len(pool) < 1:
+                # Fallback: same clothes_type (broad: top / bottom / outfit)
+                ctype = self.item_to_clothes_type.get(anchor_id, 1)
+                pool = [i for i in self.type_to_items.get(ctype, self.all_items) if i != anchor_id]
+
+            if len(pool) < 1:
+                pool = [i for i in self.all_items if i != anchor_id]
+        else:
+            # Random global negative (Strategy 2 disabled)
+            pool = [i for i in self.all_items if i != anchor_id]
+
+        neg_item = self._rng.choice(pool)
+        return neg_item
+
+    # ── Dataset interface ──────────────────────────────────────────────────────
+
+    def __len__(self) -> int:
+        return len(self.df)
+
+    def __getitem__(self, idx):
+        """
+        Return a 4-tuple of (anchor_pil, positive_pil, negative_pil, caption_str).
+
+        anchor   : Consumer photo (real-world, noisy).
+        positive : Matching studio shop photo for the same item.
+        negative : Shop photo for a different item (hard-mined or random).
+        caption  : Structured / plain text description for the anchor item.
+        """
+        row = self.df.iloc[idx]
+        anchor_id = row["item_id"]
+
+        anchor_img = self._load(row["consumer_image"])
+        pos_img = self._load(row["shop_image"])
+        caption = self._build_caption(anchor_id)
+
+        neg_item = self._sample_negative(anchor_id)
+        neg_img_path = self._rng.choice(list(self.item_to_shops[neg_item]))
+        neg_img = self._load(neg_img_path)
+
+        return anchor_img, pos_img, neg_img, caption
+
+
+def hybrid_augmented_collate_fn(batch, processor, tokenizer):
+    """
+    Custom DataLoader collation function for AdvancedCLIPHybridDataset batches.
+
+    Converts a list of (anchor_pil, positive_pil, negative_pil, caption_str)
+    tuples produced by AdvancedCLIPHybridDataset.__getitem__ into batched
+    PyTorch tensors ready for GPU consumption.
+
+    Processing steps:
+        1. Transpose the list of tuples into four separate sequences.
+        2. Run image triplets (anchor, positive, negative) through CLIP's
+           image processor: resize to 224x224, apply ImageNet normalization,
+           return ``pixel_values`` tensors of shape (B, 3, 224, 224).
+        3. Tokenize caption strings with CLIP's tokenizer: convert to token
+           ids, pad to uniform length, truncate at CLIP's 77-token maximum,
+           return ``input_ids`` and ``attention_mask`` tensors of shape (B, L).
+
+    Args:
+        batch: List of (anchor_pil, positive_pil, negative_pil, caption_str)
+            tuples collected by the DataLoader from the dataset.
+        processor: A HuggingFace ``AutoProcessor`` / ``CLIPProcessor`` instance
+            responsible for image preprocessing.
+        tokenizer: A HuggingFace ``AutoTokenizer`` / ``CLIPTokenizer`` instance
+            responsible for text tokenization.
+
+    Returns:
+        Tuple of (a, p, n, t, captions) where:
+            a       : Dict with ``pixel_values`` tensor for anchor images.
+            p       : Dict with ``pixel_values`` tensor for positive images.
+            n       : Dict with ``pixel_values`` tensor for negative images.
+            t       : Dict with ``input_ids`` and ``attention_mask`` for captions.
+            captions: Original caption strings (useful for debugging / logging).
+    """
+    anchors, positives, negatives, captions = zip(*batch)
+
+    # Process image triplets into normalized pixel tensors
+    a = processor(images=list(anchors),   return_tensors="pt", padding=True)
+    p = processor(images=list(positives), return_tensors="pt", padding=True)
+    n = processor(images=list(negatives), return_tensors="pt", padding=True)
+
+    # Tokenize text captions: pad shorter sequences, truncate at CLIP's 77-token limit
+    t = tokenizer(list(captions), return_tensors="pt", padding=True, truncation=True, max_length=77)
+
+    return a, p, n, t, list(captions)
 
 
 class CLIPHybridDataset(Dataset):
